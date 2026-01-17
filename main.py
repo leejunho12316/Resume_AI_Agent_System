@@ -100,7 +100,7 @@ def start_writing_workflow():
                 root.after(0, lambda a=attempt: status_label.config(text=f"시도 {a}: Writer가 자기소개서를 작성 중입니다...", fg="#2980B9"))
                 
                 # 1. Writer 실행
-                if not write_cover_letter():
+                if not write_cover_letter(attempt):
                     raise Exception("자기소개서 작성 중 API 오류가 발생했습니다.")
 
                 # 2. Teacher 실행

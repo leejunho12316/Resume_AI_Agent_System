@@ -2,7 +2,6 @@ import os
 import time
 import requests
 import base64
-import mimetypes
 
 # Word 파일 처리를 위해 추가
 try:
@@ -11,27 +10,18 @@ except ImportError:
     pass
 
 def get_api_config():
-    """
-    API_KEY.txt 파일에서 API 키와 모델 이름을 읽어옵니다.
-    형식: API_KEY,MODEL_NAME (쉼표로 구분)
-    """
+    """API_KEY.txt 파일에서 API 키와 모델 이름을 읽어옵니다."""
     file_path = "API_KEY.txt"
     if not os.path.exists(file_path):
         return "", ""
     try:
-        # utf-8-sig는 윈도우 메모장 등에서 붙는 BOM 문자를 자동으로 제거합니다.
         with open(file_path, "r", encoding="utf-8-sig") as f:
             content = f.read().strip()
             if not content:
                 return "", ""
-            
-            # 쉼표(,)를 기준으로 분리합니다.
             parts = [p.strip() for p in content.split(',')]
-            
-            # 따옴표나 기타 공백이 포함되어 있을 경우를 대비해 정밀하게 정제합니다.
             api_key = parts[0].replace('"', '').replace("'", "").strip() if len(parts) > 0 else ""
             model_name = parts[1].replace('"', '').replace("'", "").strip() if len(parts) > 1 else ""
-            
             return api_key, model_name
     except Exception as e:
         print(f"API 설정 파일을 읽는 중 오류 발생: {e}")
@@ -42,16 +32,15 @@ def extract_text_from_docx(file_path):
     try:
         doc = Document(file_path)
         return "\n".join([para.text for para in doc.paragraphs])
-    except Exception as e:
-        print(f"Word 파일 읽기 오류: {e}")
+    except Exception:
         return ""
 
 def call_gemini_api(prompt, file_path=None, system_instruction=""):
-    # 파일에서 API 키와 모델 로드
+    """Gemini API를 호출합니다. PDF는 바이너리, Word/Text는 텍스트 추출 방식으로 처리합니다."""
     api_key, model_name = get_api_config()
     
     if not api_key or not model_name:
-        print("오류: API_KEY.txt 설정이 올바르지 않습니다. (키와 모델명이 모두 필요합니다)")
+        print("오류: API_KEY.txt 설정이 올바르지 않습니다.")
         return None
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
@@ -62,18 +51,32 @@ def call_gemini_api(prompt, file_path=None, system_instruction=""):
     if file_path:
         ext = os.path.splitext(file_path)[1].lower()
         if ext == ".pdf":
-            # PDF는 바이너리로 전달 (레이아웃 보존)
-            with open(file_path, "rb") as f:
-                base64_data = base64.b64encode(f.read()).decode('utf-8')
-            parts.append({"inlineData": {"mimeType": "application/pdf", "data": base64_data}})
+            # PDF 파일은 인라인 데이터로 전달
+            try:
+                with open(file_path, "rb") as f:
+                    base64_data = base64.b64encode(f.read()).decode('utf-8')
+                parts.append({"inlineData": {"mimeType": "application/pdf", "data": base64_data}})
+            except Exception as e:
+                print(f"PDF 읽기 오류: {e}")
+                return None
         else:
-            # Word나 기타 파일은 텍스트로 추출하여 전달 (Gemini inlineData 미지원 대응)
-            extracted_text = extract_text_from_docx(file_path) if ext == ".docx" else ""
-            if not extracted_text:
+            # Word(.docx) 또는 기타 텍스트 파일 처리
+            extracted_text = ""
+            if ext == ".docx":
+                extracted_text = extract_text_from_docx(file_path)
+            else:
                 try:
-                    with open(file_path, "r", encoding="utf-8") as f: extracted_text = f.read()
-                except: pass
-            prompt = f"이 파일의 내용입니다:\n\n{extracted_text}\n\n{prompt}"
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        extracted_text = f.read()
+                except:
+                    pass
+            
+            if extracted_text:
+                # 추출된 텍스트를 프롬프트 상단에 결합
+                prompt = f"이 서류의 내용입니다:\n\n{extracted_text}\n\n{prompt}"
+            else:
+                print(f"오류: 파일에서 내용을 추출할 수 없습니다 ({ext}).")
+                return None
 
     parts.append({"text": prompt})
     
@@ -82,7 +85,7 @@ def call_gemini_api(prompt, file_path=None, system_instruction=""):
         "systemInstruction": {"parts": [{"text": system_instruction}]}
     }
     
-    # 지수 백오프 적용
+    # 지수 백오프 적용 (재시도 로직)
     for i in range(5):
         try:
             response = requests.post(url, json=payload)
@@ -101,6 +104,15 @@ def call_gemini_api(prompt, file_path=None, system_instruction=""):
     return None
 
 def analyze_applicant_info(file_path):
+    """지원자 분석을 수행합니다. PDF 및 Word 파일을 지원합니다."""
+    # 지원 확장자 체크
+    allowed_exts = [".pdf", ".docx", ".txt"]
+    ext = os.path.splitext(file_path)[1].lower()
+    
+    if ext not in allowed_exts:
+        print(f"지원자 분석 중단: 지원하지 않는 형식입니다. ({file_path})")
+        return False
+
     output_path = os.path.join("res", "Applicant_data.txt")
     print(f"지원자 분석 중: {os.path.basename(file_path)}")
     
@@ -108,12 +120,13 @@ def analyze_applicant_info(file_path):
         "당신은 전문 채용 담당자입니다. 제공된 서류를 바탕으로 지원자의 역량을 분석해 주세요.\n"
         "1. 기본 정보\n2. 주요 기술\n3. 경력 사항\n4. 핵심 강점\n5. 면접 질문 제안"
     )
-    user_prompt = "제공된 이력서 파일을 바탕으로 지원자 분석 보고서를 작성해줘."
+    user_prompt = "제공된 지원 서류 파일을 분석하여 보고서를 작성해줘."
     
     analysis_result = call_gemini_api(user_prompt, file_path, system_prompt)
     
     if analysis_result:
-        if not os.path.exists("res"): os.makedirs("res")
+        if not os.path.exists("res"): 
+            os.makedirs("res")
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(analysis_result)
         print(f"성공: 지원자 분석 결과가 '{output_path}'에 저장되었습니다.")

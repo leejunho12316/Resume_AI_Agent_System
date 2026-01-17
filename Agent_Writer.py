@@ -1,6 +1,7 @@
 import os
 import time
 import requests
+import shutil
 
 def get_api_config():
     """
@@ -66,9 +67,17 @@ def read_res_file(filename):
             return ""
     return ""
 
-def write_cover_letter():
-    """4개의 분석 파일을 통합하여 자기소개서를 작성합니다."""
-    output_path = os.path.join("res", "result.txt")
+def write_cover_letter(attempt=1):
+    """
+    4개의 분석 파일을 통합하여 자기소개서를 작성합니다.
+    attempt 인자를 받아 파일명을 결정합니다.
+    """
+    # 시도 횟수에 따른 파일명 설정 (예: result_attempt1.txt)
+    filename = f"result_attempt{attempt}.txt"
+    output_path = os.path.join("res", filename)
+    # Teacher 에이전트가 참조할 기본 파일명도 유지 (선택 사항)
+    default_output_path = os.path.join("res", "result.txt")
+
     
     # 1. 모든 분석 데이터 로드 (텍스트 추출)
     company_data = read_res_file("Company_data.txt")
@@ -88,51 +97,92 @@ def write_cover_letter():
         print("오류: 분석 데이터가 부족하여 작성을 시작할 수 없습니다.")
         return False
 
-    print("Agent_Writer: 4개의 소스 파일을 분석하여 자기소개서 작성을 시작합니다...")
+    print(f"Agent_Writer: (시도 {attempt}) 자기소개서 작성을 시작합니다...")
 
-    # 3. 구조화된 프롬프트 구성 (텍스트 삽입 방식)
-    system_prompt = (
-        "당신은 최고의 대기업 취업 컨설턴트입니다. "
-        "제공된 4가지 소스 데이터를 융합하여 지원자의 경험이 기업의 인재상과 직무 역량에 완벽히 부합하도록 자소서를 작성하세요."
-    )
-    
-    user_prompt = f"""
-아래 제공된 [데이터 소스]의 내용을 바탕으로 자기소개서를 작성해주세요.
-모든 내용은 [작성 가이드라인]을 엄격히 준수해야 합니다.
 
-[데이터 소스 1: 기업 분석]
-{company_data}
 
-[데이터 소스 2: 지원자 역량]
-{applicant_data}
+    #3. 프롬프트 구성
+    if attempt == 1: #첫 번째 시도일 때
+        system_prompt = (
+            "당신은 최고의 대기업 취업 컨설턴트입니다. "
+            "제공된 소스 데이터를 융합하여 지원자의 경험이 기업의 인재상과 직무 역량에 부합하도록 자소서를 작성하세요."
+        )
+        
+        user_prompt = f"""
+        아래 제공된 [데이터 소스]의 내용을 바탕으로 자기소개서를 작성해주세요.
 
-[데이터 소스 3: 프로젝트 상세]
-{project_data}
+        [데이터 소스 1: 기업 분석]
+        {company_data}
 
-[작성 가이드라인: Rules.txt]
-{rules}
+        [데이터 소스 2: 지원자 역량]
+        {applicant_data}
 
----
+        [데이터 소스 3: 프로젝트 상세]
+        {project_data}
 
-위 데이터를 바탕으로 다음 4가지 항목을 작성하세요. 
-각 항목은 매력적인 소제목을 포함해야 하며, 구체적인 수치나 기술 스택을 언급하여 신뢰도를 높이세요.
+        [작성 가이드라인]
+        {rules}
 
-1. 지원동기: 기업의 최근 행보와 지원자의 커리어 목표를 연결하세요.
-2. 직무 관련 역량/경험: [프로젝트 상세]의 내용을 활용하여 성과 위주로 작성하세요.
-3. 성장과정: 지원자의 가치관이 직무에 어떻게 긍정적 영향을 미칠지 설명하세요.
-4. 성격의 장단점: 장점은 극대화하고 단점은 직무 수행에 지장이 없는 선에서 보완 과정을 명시하세요.
+        ---
+        각 항목은 매력적인 소제목을 포함하여 4가지 항목을 작성하세요.
+        1. 지원동기 (1000자)
+        2. 직무 관련 역량/경험 1 (1000자)
+        3. 직무 관련 역량/경험 2 (1000자)
+        4. 성격의 장단점 (1000자)
+        """
+    else: #그 외
+        
+        previous_result = read_res_file("result.txt")
+        teacher_feedback = read_res_file("teacher_feedback.txt")
+        
+        system_prompt = (
+            "당신은 최고의 대기업 취업 컨설턴트입니다. "
+            "이전 작성물과 전문가의 피드백을 분석하여, 지적된 사항을 완벽히 보완한 수정본을 작성하는 것이 당신의 임무입니다."
+        )
+        
+        user_prompt = f"""
+        이전 시도에서 작성된 자기소개서에 대해 전문가의 피드백이 접수되었습니다. 
+        피드백 내용을 엄격히 반영하여 기존 내용을 대폭 수정 및 보완해주세요.
+        
+        아래 제공된 [데이터 소스]의 내용을 바탕으로 자기소개서를 보완해주세요.
 
-작성 결과만 출력해주세요.
-"""
+        [데이터 소스 1: 기업 분석]
+        {company_data}
+
+        [데이터 소스 2: 지원자 역량]
+        {applicant_data}
+
+        [데이터 소스 3: 프로젝트 상세]
+        {project_data}
+
+        [작성 가이드라인]
+        {rules}
+
+        ---
+        [기존 자기소개서]
+        {previous_result}
+
+        [전문가 피드백 (반드시 반영할 것)]
+        {teacher_feedback}
+        """
+        
 
     # 4. API 호출
     draft = call_gemini_api(user_prompt, system_prompt)
+
     
     if draft:
         if not os.path.exists("res"): os.makedirs("res")
+        
+        # 1) 시도별 파일 저장
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(draft)
-        print(f"성공: 자기소개서가 생성되어 '{output_path}'에 저장되었습니다.")
+        
+        # 2) Teacher가 읽을 수 있도록 result.txt로 복사 (Teacher 코드를 수정하지 않아도 됨)
+        with open(default_output_path, "w", encoding="utf-8") as f:
+            f.write(draft)
+            
+        print(f"성공: 자기소개서가 '{output_path}'에 저장되었습니다.")
         return True
     return False
 

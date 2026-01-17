@@ -24,12 +24,17 @@ def get_api_config():
         print(f"API 설정 파일을 읽는 중 오류 발생: {e}")
         return "", ""
 
-def call_gemini_api(prompt, system_instruction=""):
+def call_gemini_api(prompt, system_instruction="", cheap_mode=False):   
     """Gemini API를 호출하여 평가 및 채점을 수행합니다."""
+
     api_key, model_name = get_api_config()
     if not api_key or not model_name:
         print("오류: API_KEY.txt 설정이 올바르지 않습니다.")
         return None
+
+    #cheap_mode : 싼 gemini model로 전환. 총점 구하기용.
+    if cheap_mode:
+        model_name = 'gemini-2.5-flash-lite'
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
     
@@ -80,6 +85,8 @@ def grade_cover_letter():
     """
     criteria = call_gemini_api(criteria_prompt, "당신은 엄격한 인사팀 평가 위원입니다. 평가 지표만 리스트로 출력하세요.")
 
+    print(f'--------------------criteria--------------------\n{criteria}')
+    
     # 3. Writer가 작성한 자기소개서 읽기
     if not os.path.exists(result_path):
         print("오류: res/result.txt 파일이 존재하지 않습니다.")
@@ -98,11 +105,38 @@ def grade_cover_letter():
     {cover_letter}
 
     위의 20가지 평가 항목을 바탕으로 자기소개서를 매우 엄격하게 채점하세요.
-    각 항목당 5점 만점이며, 최종 합산 점수(0~100)만 숫자 형태로 출력하세요.
-    다른 설명은 일절 배제하고 숫자만 출력해야 합니다.
+    각 항목당 5점 만점이며, 다음 내용을 담은 채점표를 작성하세요.
+    평가 항목, 평가 내용, 평가 근거, 해당 항목의 점수
+    채점표 이외에 다른 내용은 일절 작성하지 마세요.
     """
     
-    score_text = call_gemini_api(grading_prompt, "당신은 보수적인 채용 전문가입니다. 최종 점수 숫자만 반환하세요.")
+    scorecard = call_gemini_api(grading_prompt, "당신은 매우 보수적인 채용 전문가입니다. 채점표만 작성하세요.")
+
+    print(f'--------------------scorecard--------------------\n{scorecard}')
+
+    # 5. 채점표를 teacher_feedback.txt로 저장
+    output_dir = "res"
+    file_path = os.path.join(output_dir, "teacher_feedback.txt")
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        print(f"System: '{output_dir}' 폴더가 생성되었습니다.")
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(scorecard)
+
+
+    # 6. 총점 출력
+    print("Agent_Teacher: 도출된 항목을 바탕으로 자기소개서 채점 시작...")
+    grading_prompt = f"""
+    [채점표]
+    {scorecard}
+
+    채점표를 보고 총점을 구하세요.
+    총점만 정수로 출력하고 그 외 제외한 어떤 것도 추가하지 마세요.
+    """
+    
+    score_text = call_gemini_api(grading_prompt, "당신은 보수적인 채용 전문가입니다. 채점표를 보고 총점만 말하세요.", cheap_mode=True)
     
     # 숫자 추출
     try:
@@ -110,7 +144,7 @@ def grade_cover_letter():
         print(f"최종 평가 점수: {score}점")
         
         # 5. 결과 판단
-        if score >= 80:
+        if score >= 90:
             print("결과: PASS (yes)")
             return "yes"
         else:
